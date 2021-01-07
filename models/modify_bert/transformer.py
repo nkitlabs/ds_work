@@ -104,52 +104,68 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
         return tf.reshape(tensor, [input_shape[0], input_shape[1], self.vocab_size])
 
 class ModifiedBertAttention(tf.keras.layers.Layer):
-    '''Performs multi-headed attention from `tensor_in` to `to_tensor`.
+    '''Performs multi-headed attention from tensor_inputs.
 
+    The object consists of three EinsumDense Layers to support query (Q), key (K), 
+    and value (V) tensors and a Dropout Layer as described in the paper
+    `attention is all you need`.
+
+    Args:
+        hidden_size: Positive integer. Total number of output space.
+        num_head: Positive integer. number of attention heads in this layer.
+        kernel_initializer: Initializer for the weight matrix.
+        drop_rate: Float between 0 and 1. Fraction of the input units to drop
+            in a Dropout layer.
+        is_scale: Boolean. Whether the attention score should be scaled.
     '''
-    def __init__(self, config, **kwargs):
+    def __init__(
+        self, 
+        hidden_size,
+        num_head=1,
+        kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.2),
+        drop_rate=0.2,
+        is_scale=True, 
+        **kwargs):
         super().__init__(**kwargs)
         
-        if config.hidden_size % config.num_attention_head != 0:
+        if hidden_size % num_head != 0:
             raise ValueError(
-                f'Hidden size {config.hidden_size} is not a multiple of'
-                f'the number of attention heads {config.num_attention_head}'
+                f'Hidden size {hidden_size} is not a multiple of'
+                f'the number of attention heads {num_head}'
             )
         
-        self.hidden_size = config.hidden_size
-        self.num_attention_head = config.num_attention_head
-        self.unit_per_head = config.hidden_size / config.num_attention_head
-        self.initializer_range = config.initializer_range
-        self.attention_drop_rate = config.attention_drop_rate
+        self.hidden_size = hidden_size
+        self.num_head = num_head
+        self.unit_per_head = hidden_size / num_head
+        self.kernel_initializer = kernel_initializer
+        self.drop_rate = drop_rate
+        self.is_scale = is_scale
         
-        initializer_func = tf.keras.initializers.TruncatedNormal(stddev=self.initializer_range)
         self.QueryLayer = tf.keras.layers.experimental.EinsumDense(
             equation='abc,cde->abde',
-            output_shape=(None, self.num_attention_head, self.unit_per_head),
+            output_shape=(None, self.num_head, self.unit_per_head),
             bias_axes='de',
-            kernel_initializer=initializer_func,
+            kernel_initializer=self.kernel_initializer,
             name='query'
         )
         
-        initializer_func = tf.keras.initializers.TruncatedNormal(stddev=self.initializer_range)
         self.KeyLayer = tf.keras.layers.experimental.EinsumDense(
             equation='abc,cde->abde',
-            output_shape=(None, self.num_attention_head, self.unit_per_head),
+            output_shape=(None, self.num_head, self.unit_per_head),
             bias_axes='de',
-            kernel_initializer=initializer_func,
+            kernel_initializer=self.kernel_initializer,
             name='key'
         )
 
-        initializer_func = tf.keras.initializers.TruncatedNormal(stddev=self.initializer_range)
         self.ValueLayer = tf.keras.layers.experimental.EinsumDense(
             equation='abc,cde->abde',
-            output_shape=(None, self.num_attention_head, self.unit_per_head),
+            output_shape=(None, self.num_head, self.unit_per_head),
             bias_axes='de',
-            kernel_initializer=initializer_func,
+            kernel_initializer=self.kernel_initializer,
             name='value'
         )
 
-        self.Dropout = tf.keras.layers.Dropout(rate=self.attention_drop_rate)
+        self.Dropout = tf.keras.layers.Dropout(rate=self.drop_rate)
     
     def call(
         self, 
@@ -207,9 +223,10 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         value_tensor = self.ValueLayer(value_tensor)
 
         # attention score = QK^T/scale_factor = [B, H, Lq, Lk]
-        scale_factor = 1/np.sqrt(self.unit_per_head)
         attention_scores = tf.einsum('aecd,acbd->acbe', key_tensor, query_tensor)
-        attention_scores = tf.math.scalar_mul(scale_factor, attention_scores)
+        if self.is_scale:
+            scale_factor = 1/np.sqrt(self.unit_per_head)
+            attention_scores = tf.math.scalar_mul(scale_factor, attention_scores)
 
         if attention_mask is not None:
             # convert to size [B, 1, Lq, Lk]
@@ -218,7 +235,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         
         # attention_probs = [B, H, Lq, Lk]
         attention_probs = tf.nn.softmax(attention_scores)
-        attention_probs = self.Dropout(attention_probs)
+        attention_probs = self.Dropout(attention_probs, training=training)
 
         # Mask heads, however, in reference they calculate on attention_scores.
         # Should it be attention_probs? For now, we comment this.
