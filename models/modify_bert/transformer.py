@@ -2,6 +2,7 @@
 import tensorflow as tf
 import numpy as np
 from utils import get_tensor_shape
+from activate_function import gelu_activate_fn
 
 class ModifiedBertEmbedding(tf.keras.layers.Layer):
     def __init(self, config, **kwargs):
@@ -107,8 +108,8 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
     '''Performs multi-headed attention from tensor_inputs.
 
     The object consists of three EinsumDense Layers to support query (Q), key (K), 
-    and value (V) tensors and a Dropout Layer as described in the paper
-    `attention is all you need`.
+    and value (V) tensors, Dropout Layers, Linear and a normalization layer
+    as described in the paper `attention is all you need`.
 
     Args:
         hidden_size: Positive integer. Total number of output space.
@@ -116,6 +117,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         kernel_initializer: Initializer for the weight matrix.
         drop_rate: Float between 0 and 1. Fraction of the input units to drop
             in a Dropout layer.
+        layer_norm_eps: Small float added to variance to avoid dividing by zero.
         is_scale: Boolean. Whether the attention score should be scaled.
     '''
     def __init__(
@@ -124,6 +126,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         num_head=1,
         kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.2),
         drop_rate=0.2,
+        layer_norm_eps=1e-12,
         is_scale=True, 
         **kwargs):
         super().__init__(**kwargs)
@@ -139,6 +142,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         self.unit_per_head = hidden_size / num_head
         self.kernel_initializer = kernel_initializer
         self.drop_rate = drop_rate
+        self.layer_norm_eps = layer_norm_eps
         self.is_scale = is_scale
         
         self.QueryLayer = tf.keras.layers.experimental.EinsumDense(
@@ -165,14 +169,28 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
             name='value'
         )
 
-        self.Dropout = tf.keras.layers.Dropout(rate=self.drop_rate)
+        self.Dropout1 = tf.keras.layers.Dropout(rate=self.drop_rate)
+
+        self.Dense = tf.keras.layers.experimental.EinsumDense(
+            equation='abcd,cde->abe',
+            output_shape=(None, self.hidden_size),
+            bias_axes='e',
+            kernel_initializer=self.kernel_initializer,
+            name='dense',
+        )
+        
+        self.LayerNorm = tf.keras.layers.LayerNormalization(
+            epsilon=self.layer_norm_eps,
+            name='LayerNorm',
+        )
+        self.Dropout2 = tf.keras.layers.Dropout(rate=self.drop_rate)
     
     def call(
         self, 
         tensor_inputs, 
         attention_mask=None, 
         head_mask=None, 
-        output_attention=False,
+        does_return_attention_probs=False,
         training=False):
         '''Performs multi-head attention from `tensor_inputs`.
 
@@ -182,17 +200,17 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
 
         Then, the query and key tensors are dot-producted and scaled (if any).
         These are softmaxed to obtain attention probabilities. The value tensors
-        are then interpolated by these probabilities, then concatenated back to
-        a single tensor and returned.
+        are then interpolated by these probabilities. Finally, the results and
+        the input is passed into a residual and a normalized layer.
 
         Args:
-            tensor_inputs: list of float tensors
+            tensor_inputs: list of float tensors [Query, Key, Value]
                 If `tensor_inputs`'s length is 1 or tensors in `tensor_inputs` 
                 are the same, then this is self-attention.
             attention_mask: (optional) float32 Tensor shape [batch_size, 
             query_seq_length, key_seq_length]
             head_mask: (optional) float32 Tensor.
-            output_attention: boolean (Default: False).
+            does_return_attention_probs: boolean (Default: False).
                 Whether the result additionally returns attention_probs.
             training: boolean (Default: False).
         Returns:
@@ -208,7 +226,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         #   Lv = sequence length of value tensor, It is equal to Lk
         #   H = number of attention heads
         #   U = number of units per head
-        #   dim = dimension of inputs
+        #   dim = dimension of inputs, It's equal to `hidden_size` (H*U)
 
         # [query, key, value] should be [B, Lq, dim], [B, Lk, dim], [B, Lv, dim]
         query_tensor = tensor_inputs[0]
@@ -235,7 +253,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         
         # attention_probs = [B, H, Lq, Lk]
         attention_probs = tf.nn.softmax(attention_scores)
-        attention_probs = self.Dropout(attention_probs, training=training)
+        attention_probs = self.Dropout1(attention_probs, training=training)
 
         # Mask heads, however, in reference they calculate on attention_scores.
         # Should it be attention_probs? For now, we comment this.
@@ -244,7 +262,13 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
 
         # `attention_output` = [B, Lq, H, U]
         attention_output = tf.einsum('acbe,aecd->abcd', attention_probs, value_tensor)
+        
+        # `attention_output` = [B, Lq, H*U (dim)]
+        attention_output = self.Dense(attention_output)
+        attention_output = self.Dropout2(attention_output, training=training)
+        attention_output = self.LayerNorm(attention_output + tensor_inputs[0])
+        
         output = (attention_output,)
-        if output_attention:
+        if does_return_attention_probs:
             output = (attention_output, attention_probs)
         return output
