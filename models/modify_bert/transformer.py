@@ -214,8 +214,11 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
                 Whether the result additionally returns attention_probs.
             training: boolean (Default: False).
         Returns:
-            float Tensor of shape [batch_size, query_seq_length, 
-            num_attention_head, unit_per_head].
+            - float Tensor of shape [batch_size, query_seq_length, 
+                num_attention_head * unit_per_head (dimension input)].
+            - (conditional: if does_return_attention_probs is True)
+                float Tensor of `attention_probs` [batch_size, number_of_head, 
+                query_seq_length, key_seq_length]
         Raises:
             ValueError: Any of the arguments or tensor shapes are invalid.
         '''
@@ -272,3 +275,135 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         if does_return_attention_probs:
             output = (attention_output, attention_probs)
         return output
+
+class ModifiedBertLayer(tf.keras.layers.Layer):
+    '''Performs BERT unit.
+
+    The object consists of an attention layer in sequence with a feed-forward 
+    network and a normalize layer as described in the paper 
+    `attention is all you need`.
+
+    Args:
+        hidden_size: Positive integer. Total number of output space.
+        feed_forward_size: Positive integer. The number of units in 
+            a feed-froward layer.
+        num_head: Positive integer. number of attention heads in this layer.
+        kernel_initializer: Initializer for the weight matrix.
+        activation_fn: Function or string. the representative of activation
+        function in a feed-forward layer.
+        drop_rate: Float between 0 and 1. Fraction of the input units to drop
+            in a Dropout layer.
+        layer_norm_eps: Small float added to variance to avoid dividing by zero.
+        is_scale: Boolean. Whether the attention score should be scaled.
+    '''
+    def __init__(
+        self, 
+        hidden_size,
+        feed_forward_size=3072,
+        num_head=1,
+        kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.2),
+        activation_fn=gelu_activate_fn,
+        drop_rate=0.2,
+        layer_norm_eps=1e-12,
+        is_scale=True, 
+        **kwargs):
+        
+        self.hidden_size = hidden_size
+        self.feed_forward_size = feed_forward_size
+        self.num_head = num_head
+        self.kernel_initializer = kernel_initializer
+        self.activation_fn = activation_fn
+        self.drop_rate = drop_rate
+        self.layer_norm_eps = layer_norm_eps
+        self.is_scale = is_scale
+
+        super.__init__(**kwargs)
+        self.Attention = ModifiedBertAttention( 
+            hidden_size=hidden_size,
+            num_head=num_head,
+            kernel_initializer=kernel_initializer,
+            drop_rate=drop_rate,
+            layer_norm_eps=layer_norm_eps,
+            is_scale=is_scale, 
+        )
+
+        self.FeedForward = tf.keras.layers.experimental.EinsumDense(
+            equation='abc,cd->abd',
+            output_shape=(None, feed_forward_size),
+            bias_axes='d',
+            kernel_initializer=kernel_initializer,
+            name='feed_forward',
+        )
+        self.FeedForwardActFn = tf.keras.layers.Activation(activation_fn)
+
+        self.Dense = tf.keras.layers.experimental.EinsumDense(
+            equation='abc,cd->abd',
+            bias_axes='d',
+            output_shape=(None, hidden_size),
+            kernel_initializer=kernel_initializer,
+            name='dense',
+        )
+        self.LayerNorm = tf.keras.layers.LayerNormalization(
+            epsilon=self.layer_norm_eps,
+            name='LayerNorm',
+        )
+        self.Dropout = tf.keras.layers.Dropout(rate=self.drop_rate)
+    
+    def call(
+        self,
+        tensor_inputs, 
+        attention_mask=None, 
+        head_mask=None, 
+        does_return_attention_probs=False,
+        training=False):
+        '''
+        Args:
+            tensor_inputs: list of float tensors [Query, Key, Value]
+                If `tensor_inputs`'s length is 1 or tensors in `tensor_inputs` 
+                are the same, then this is self-attention.
+            attention_mask: (optional) float32 Tensor shape [batch_size, 
+            query_seq_length, key_seq_length]
+            head_mask: (optional) float32 Tensor.
+            does_return_attention_probs: boolean (Default: False).
+                Whether the result additionally returns attention_probs.
+            training: boolean (Default: False).
+        Returns:
+            - float Tensor of shape [batch_size, query_seq_length, 
+                num_attention_head * unit_per_head (dimension input)].
+            - (conditional: if does_return_attention_probs is True)
+                float Tensor of `attention_probs` [batch_size, number_of_head, 
+                query_seq_length, key_seq_length]
+        Raises:
+            ValueError: Any of the arguments or tensor shapes are invalid.
+        '''
+        # Scalar dimension reference:
+        #   B = batch size
+        #   Lq = sequence length of query tensor
+        #   Lk = sequence length of key tensor
+        #   Lv = sequence length of value tensor, It is equal to Lk
+        #   H = number of attention heads
+        #   U = number of units per head
+        #   dim = dimension of inputs, It's equal to `hidden_size` (H*U)
+        #   F = number of units in a feed-forward layer
+
+        # `attention_output` = [B, Lq, H*U (dim)]
+        attention_outputs = self.Attention(
+            tensor_inputs, 
+            attention_mask=attention_mask, 
+            head_mask=head_mask, 
+            does_return_attention_probs=does_return_attention_probs,
+            training=training
+        )
+        attention_output = attention_outputs[0]
+        
+        # `feed_forward_output` = [B, Lq, F]
+        feed_forward_output = self.FeedForward(attention_output)
+        feed_forward_output = self.FeedForwardActFn(feed_forward_output)
+        
+        # `attention_output` = [B, Lq, dim]
+        tensor_out = self.Dense(feed_forward_output)
+        tensor_out = self.Dropout(tensor_out, training=training)
+        tensor_out = self.LayerNorm(tensor_out + attention_output)
+        outputs = (tensor_out,) + attention_outputs[1:]
+        
+        return outputs
