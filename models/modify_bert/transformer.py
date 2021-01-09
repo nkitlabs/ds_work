@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 from utils import get_tensor_shape
 from activate_function import gelu_activate_fn
+from result_template import ResultBertModel
 
 class ModifiedBertEmbedding(tf.keras.layers.Layer):
     def __init(self, config, **kwargs):
@@ -196,7 +197,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
 
         The function first projects `tensor_inputs` into query, key, value 
         tensors. There are a list of tensors of length `num_attention_heads`,
-        where each tensor's shape is [batch_size, seq_length, size_per_head]
+        where each tensor's shape is [batch_size, seq_length, hidden_size]
 
         Then, the query and key tensors are dot-producted and scaled (if any).
         These are softmaxed to obtain attention probabilities. The value tensors
@@ -325,6 +326,7 @@ class ModifiedBertLayer(tf.keras.layers.Layer):
             drop_rate=drop_rate,
             layer_norm_eps=layer_norm_eps,
             is_scale=is_scale, 
+            name='attention',
         )
 
         self.FeedForward = tf.keras.layers.experimental.EinsumDense(
@@ -407,3 +409,91 @@ class ModifiedBertLayer(tf.keras.layers.Layer):
         outputs = (tensor_out,) + attention_outputs[1:]
         
         return outputs
+
+class ModifiedBertEncoder(tf.keras.layers.Layer):
+    def __init__(
+        self, 
+        hidden_size,
+        feed_forward_size=3072,
+        num_head=1,
+        num_hidden_layers=12,
+        kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.2),
+        activation_fn=gelu_activate_fn,
+        drop_rate=0.2,
+        layer_norm_eps=1e-12,
+        is_scale=True, 
+        **kwargs):
+        
+        self.hidden_size = hidden_size
+        self.feed_forward_size = feed_forward_size
+        self.num_head = num_head
+        self.num_hidden_layers = num_hidden_layers
+        self.kernel_initializer = kernel_initializer
+        self.activation_fn = activation_fn
+        self.drop_rate = drop_rate
+        self.layer_norm_eps = layer_norm_eps
+        self.is_scale = is_scale
+
+        super.__init__(**kwargs)
+        self.Layer = [
+            ModifiedBertLayer(
+                hidden_size=hidden_size,
+                feed_forward_size=feed_forward_size,
+                num_head=num_head,
+                num_hidden_layers=num_hidden_layers,
+                kernel_initializer=kernel_initializer,
+                activation_fn=activation_fn,
+                drop_rate=drop_rate,
+                layer_norm_eps=layer_norm_eps,
+                is_scale=is_scale, 
+                name="layer_._{}".format(i)
+            ) 
+            for i in range(num_hidden_layers)
+        ]
+    
+    def call(
+        self,
+        hidden_states,
+        attention_mask=None, 
+        head_masks=None, 
+        does_return_attention_probs=False,
+        does_return_hidden_state=False,
+        training=False,
+        does_return_dict=True):
+        
+        # all_hidden_states = () if does_return_hidden_state
+        attention_probs = () if does_return_attention_probs else None
+        all_hidden_states = () if does_return_hidden_state else None
+        if does_return_hidden_state:
+            all_hidden_states += hidden_states
+
+
+        for i, _bert_layer in enumerate(self.Layer):
+            # self-attention
+            _outputs = _bert_layer(
+                [hidden_states],
+                attention_mask=attention_mask, 
+                head_mask=head_masks[i], 
+                does_return_attention_probs=does_return_attention_probs,
+                training=training
+            )
+            hidden_states = _outputs[0]
+
+            if does_return_attention_probs:
+                attention_probs += (_outputs[1],)
+            if does_return_hidden_state:
+                all_hidden_states += hidden_states
+        
+        if not does_return_dict:
+            res = (hidden_states)
+            if does_return_attention_probs:
+                res += attention_probs
+            if does_return_hidden_state:
+                res += all_hidden_states
+            return res
+        
+        return ResultBertModel(
+            output=hidden_states,
+            hidden_states=all_hidden_states, 
+            attentions=attention_probs,
+        )
