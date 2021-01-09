@@ -6,30 +6,37 @@ from activate_function import gelu_activate_fn
 from result_template import ResultBertModel
 
 class ModifiedBertEmbedding(tf.keras.layers.Layer):
-    def __init(self, config, **kwargs):
+    def __init(
+        self, 
+        hidden_size,
+        vocab_size,
+        type_vocab_size,
+        max_position_embeddings,
+        kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.2),
+        layer_norm_eps=1e-12,
+        drop_rate=0.2,
+        **kwargs):
         super().__init__(**kwargs)
 
-        self.vocab_size = config.vocab_size
-        self.hidden_size = config.hidden_size
-        self.initializer_range = config.initializer_range
-        self.type_vocab_size = config.type_vocab_size
-        self.max_position_embeddings = config.max_position_embeddings
-        self.layer_norm_eps = config.layer_norm_eps
-        self.hidden_dropout_rate = config.hidden_dropout_rate
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.kernel_initializer = kernel_initializer
+        self.type_vocab_size = type_vocab_size
+        self.max_position_embeddings = max_position_embeddings
+        self.layer_norm_eps = layer_norm_eps
+        self.drop_rate = drop_rate
         
-        initializer_func = tf.keras.initializers.TruncatedNormal(stddev=self.initializer_range)
         self.PositionEmbedding = tf.keras.layers.Embedding(
             self.max_position_embeddings,
             self.hidden_size,
-            embeddings_initializer=initializer_func,
+            embeddings_initializer=self.kernel_initializer,
             name='position_embedding'
         )
 
-        initializer_func = tf.keras.initializers.TruncatedNormal(stddev=self.initializer_range)
         self.TokenTypeEmbedding = tf.keras.layers.Embedding(
             self.type_vocab_size,
             self.hidden_size,
-            embeddings_initializer=initializer_func,
+            embeddings_initializer=self.kernel_initializer,
             name='token_type_embedding'
         )
 
@@ -38,14 +45,13 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
             name='layer_norm'
         )
 
-        self.Dropout = tf.keras.layers.Dropout(self.hidden_dropout_rate)
+        self.Dropout = tf.keras.layers.Dropout(self.drop_rate)
     
     def build(self, input_shape):
-        initializer_func = tf.keras.initializers.TruncatedNormal(stddev=self.initializer_range)
         self.word_embed_mapping = self.add_weight(
             name='word_embedding',
             shape=[self.vocab_size, self.hidden_size],
-            initializer=initializer_func
+            initializer=self.kernel_initializer
         )
         # super().build(input_shape)
 
@@ -277,7 +283,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
             output = (attention_output, attention_probs)
         return output
 
-class ModifiedBertLayer(tf.keras.layers.Layer):
+class ModifiedBertSubLayer(tf.keras.layers.Layer):
     '''Performs BERT unit.
 
     The object consists of an attention layer in sequence with a feed-forward 
@@ -436,7 +442,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
 
         super.__init__(**kwargs)
         self.Layer = [
-            ModifiedBertLayer(
+            ModifiedBertSubLayer(
                 hidden_size=hidden_size,
                 feed_forward_size=feed_forward_size,
                 num_head=num_head,
