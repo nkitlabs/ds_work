@@ -110,8 +110,8 @@ class ResultModel(OrderedDict):
         )
 
 @dataclass
-class ResultBertModel(ResultModel):
-    '''BERT outputs, with hidden_states and attentions, if any.
+class ResultBertEncoder(ResultModel):
+    '''BERT Encoder outputs, with hidden_states and attentions, if any.
     Args:
         output: tensor object with size [batch_size, seq_length, hidden_size]
         hidden_states: (Optional) tuple of float tensors.

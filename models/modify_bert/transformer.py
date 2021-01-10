@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 from utils import get_tensor_shape
 from activate_function import gelu_activate_fn
-from result_template import ResultBertModel
+from result_template import ResultBertEncoder
 
 class ModifiedBertEmbedding(tf.keras.layers.Layer):
     def __init(
@@ -505,7 +505,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
                 res += all_hidden_states
             return res
         
-        return ResultBertModel(
+        return ResultBertEncoder(
             output=hidden_states,
             hidden_states=all_hidden_states, 
             attentions=attention_probs,
