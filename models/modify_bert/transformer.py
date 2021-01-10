@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 from utils import get_tensor_shape
 from activate_function import gelu_activate_fn
-from result_template import ResultBertEncoder
+from result_template import ResultBertEncoder, ResultBertMainLayer
 
 class ModifiedBertEmbedding(tf.keras.layers.Layer):
     def __init(
@@ -509,4 +509,131 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
             output=hidden_states,
             hidden_states=all_hidden_states, 
             attentions=attention_probs,
+        )
+
+class ModifiedBertMainLayer(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        hidden_size,
+        vocab_size,
+        type_vocab_size,
+        max_position_embeddings,
+        feed_forward_size=3072,
+        num_head=1,
+        num_hidden_layers=12,
+        kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.2),
+        activation_fn=gelu_activate_fn,
+        pooling_activation='tanh',
+        layer_norm_eps=1e-12,
+        drop_rate=0.2,
+        is_scale=True,
+        has_pooling_layer=True,
+        **kwargs):
+        super().__init__(**kwargs)
+        self.hidden_size = hidden_size
+        self.vocab_size = vocab_size
+        self.type_vocab_size = type_vocab_size
+        self.max_position_embeddings = max_position_embeddings
+        self.feed_forward_size = feed_forward_size
+        self.num_head = num_head,
+        self.num_hidden_layers = num_hidden_layers
+        self.kernel_initializer = kernel_initializer
+        self.activation_fn = activation_fn
+        self.pooling_activation = pooling_activation
+        self.layer_norm_eps = layer_norm_eps
+        self.drop_rate = drop_rate
+        self.is_scale = is_scale
+        self.has_pooling_layer = has_pooling_layer
+
+        self.Embedding = ModifiedBertEmbedding(
+            self.hidden_size,
+            self.vocab_size,
+            self.type_vocab_size,
+            self.max_position_embeddings,
+            kernel_initializer=self.kernel_initializer,
+            layer_norm_eps=self.layer_norm_eps,
+            droprate=self.drop_rate,
+            name='embedding'
+        )
+
+        self.Encoder = ModifiedBertEncoder(
+            self.hidden_size,
+            feed_forward_size=self.feed_forward_size,
+            num_head=self.num_head,
+            num_hidden_layers=self.num_hidden_layers,
+            kernel_initializer=self.kernel_initializer,
+            activation_fn=self.activation_fn,
+            drop_rate=self.drop_rate,
+            layer_norm_eps=self.layer_norm_eps,
+            is_scale=self.is_scale, 
+        )
+
+        self.Pooling = tf.keras.layers.Dense(
+            self.hidden_size,
+            kernel_initializer=self.kernel_initializer,
+            activation=self.pooling_activation,
+            name='pooling',
+        )
+    
+    def call(
+        self,
+        input_ids=None,
+        token_type_ids=None,
+        position_ids=None,
+        input_embeds=None,
+        attention_mask=None,
+        head_mask=None,
+        does_return_attention_probs=False,
+        does_return_hidden_state=False,
+        training=False,
+        does_return_dict=True
+    ):
+        _input = input_ids if input_ids is not None else input_embeds
+        input_shape = get_tensor_shape(_input)
+        if attention_mask is None:
+            attention_mask = tf.fill(input_shape, 1)
+        if token_type_ids is None:
+            token_type_ids = tf.fill(input_shape, 0)
+        
+        embedding_output = self.Embedding(
+            input_ids=input_ids,
+            position_ids=None, 
+            token_type_ids=None,
+            input_embeds=None,
+            mode='embedding',
+            training=False
+        )
+
+        # we convert 2D 0,1 attention mask to 3D 0,-100000 attention mask with 
+        # size [batch_size, 1, 1, key_length] so that we can broad cast to 
+        # [batch_size, num_head, query_length, key_length]
+        extended_attention_mask = attention_mask[:, tf.newaxis, tf.newaxis, :]
+        extended_attention_mask = tf.cast(extended_attention_mask, embedding_output.dtype)
+        extended_attention_mask = -10000.0 * (1.0-extended_attention_mask)
+
+        encoder_outputs = self.Encoder(
+            embedding_output,
+            attention_mask=extended_attention_mask, 
+            head_masks=head_mask, 
+            does_return_attention_probs=does_return_attention_probs,
+            does_return_hidden_state=does_return_hidden_state,
+            training=training,
+            does_return_dict=does_return_dict
+        )
+
+        pooling_output = None
+        if self.has_pooling_layer:
+            pooling_output = self.Pooling(encoder_outputs[0])
+        
+        if not does_return_dict:
+            return (
+                encoder_outputs[0],
+                pooling_output,
+            ) + encoder_outputs[1:]
+        
+        return ResultBertMainLayer(
+            output=encoder_outputs[0],
+            pooler_output=pooling_output,
+            hidden_states=encoder_outputs.hidden_states,
+            attentions=encoder_outputs.attentions,
         )
