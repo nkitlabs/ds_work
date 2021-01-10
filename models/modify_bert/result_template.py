@@ -124,3 +124,22 @@ class ResultBertEncoder(ResultModel):
     output: tf.Tensor = None
     hidden_states: Optional[Tuple[tf.Tensor]] = None
     attentions: Optional[Tuple[tf.Tensor]] = None
+
+@dataclass
+class ResultBertMainLayer(ResultModel):
+    '''BERT main layer outputs, with hidden_states and attentions, if any.
+    Args:
+        output: tensor object with size [batch_size, seq_length, hidden_size]
+        pooler_output: tensor object with size [batch_size, hidden_size]
+            It is a result after output passing through a pooler layer
+        hidden_states: (Optional) tuple of float tensors.
+            All hidden states calculated from sublayers.
+        attentions: (Optional) tuple of float tensors.
+            Attentions weights after the attention softmax, used to compute the 
+            weighted average in the self-attention heads.
+    '''
+
+    output: tf.Tensor = None
+    pooler_output: tf.Tensor = None
+    hidden_states: Optional[Tuple[tf.Tensor]] = None
+    attentions: Optional[Tuple[tf.Tensor]] = None
