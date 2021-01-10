@@ -8,7 +8,7 @@ from result_template import ResultBertEncoder, ResultBertMainLayer
 class ModifiedBertEmbedding(tf.keras.layers.Layer):
     def __init(
         self, 
-        hidden_size,
+        output_dim,
         vocab_size,
         type_vocab_size,
         max_position_embeddings,
@@ -19,7 +19,7 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
         super().__init__(**kwargs)
 
         self.vocab_size = vocab_size
-        self.hidden_size = hidden_size
+        self.output_dim = output_dim
         self.kernel_initializer = kernel_initializer
         self.type_vocab_size = type_vocab_size
         self.max_position_embeddings = max_position_embeddings
@@ -28,14 +28,14 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
         
         self.PositionEmbedding = tf.keras.layers.Embedding(
             self.max_position_embeddings,
-            self.hidden_size,
+            self.output_dim,
             embeddings_initializer=self.kernel_initializer,
             name='position_embedding'
         )
 
         self.TokenTypeEmbedding = tf.keras.layers.Embedding(
             self.type_vocab_size,
-            self.hidden_size,
+            self.output_dim,
             embeddings_initializer=self.kernel_initializer,
             name='token_type_embedding'
         )
@@ -50,7 +50,7 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
     def build(self, input_shape):
         self.word_embed_mapping = self.add_weight(
             name='word_embedding',
-            shape=[self.vocab_size, self.hidden_size],
+            shape=[self.vocab_size, self.output_dim],
             initializer=self.kernel_initializer
         )
         # super().build(input_shape)
@@ -70,6 +70,8 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
                 token_type_ids,
                 input_embeds, 
                 training=training)
+        elif mode == 'linear':
+            return self._linear(input_ids)
         else:
             raise ValueError(f'mode {mode} is invalid')
     
@@ -103,20 +105,20 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
         embeds = self.Dropout(embeds, training=training)
         return embeds
     
-    # tensor input [batch_size, length, hidden_size]
-    def linear(self, tensor):
+    # tensor input [batch_size, length, units]
+    def _linear(self, tensor_in):
         '''Computes logits by running inputs through a linear layer.
 
         Args:
-            tensor: A float32 tensor with shape [batch_size, length, hidden_size]
+            tensor: A float32 tensor with shape [batch_size, length, units]
         Returns:
             float32 tensor with shape [batch_size, length, vocab_size]
 
         '''
-        input_shape = get_tensor_shape(tensor)
-        tensor = tf.reshape(tensor, [-1, self.hidden_size])
-        tensor = tf.matmul(tensor, self.word_embed_mapping, transpose_b=True)
-        return tf.reshape(tensor, [input_shape[0], input_shape[1], self.vocab_size])
+        input_shape = get_tensor_shape(tensor_in)
+        _tensor = tf.reshape(tensor_in, [-1, self.output_dim])
+        _tensor = tf.matmul(_tensor, self.word_embed_mapping, transpose_b=True)
+        return tf.reshape(_tensor, [input_shape[0], input_shape[1], self.vocab_size])
 
 class ModifiedBertAttention(tf.keras.layers.Layer):
     '''Performs multi-headed attention from tensor_inputs.
@@ -126,7 +128,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
     as described in the paper `attention is all you need`.
 
     Args:
-        hidden_size: Positive integer. Total number of output space.
+        units: Positive integer. Total number of output space.
         num_head: Positive integer. number of attention heads in this layer.
         kernel_initializer: Initializer for the weight matrix.
         drop_rate: Float between 0 and 1. Fraction of the input units to drop
@@ -136,7 +138,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
     '''
     def __init__(
         self, 
-        hidden_size,
+        units,
         num_head=1,
         kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.2),
         drop_rate=0.2,
@@ -145,15 +147,15 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         **kwargs):
         super().__init__(**kwargs)
         
-        if hidden_size % num_head != 0:
+        if units % num_head != 0:
             raise ValueError(
-                f'Hidden size {hidden_size} is not a multiple of'
+                f'the Number of units {units} is not a multiple of'
                 f'the number of attention heads {num_head}'
             )
         
-        self.hidden_size = hidden_size
+        self.units = units
         self.num_head = num_head
-        self.unit_per_head = hidden_size / num_head
+        self.unit_per_head = units / num_head
         self.kernel_initializer = kernel_initializer
         self.drop_rate = drop_rate
         self.layer_norm_eps = layer_norm_eps
@@ -187,7 +189,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
 
         self.Dense = tf.keras.layers.experimental.EinsumDense(
             equation='abcd,cde->abe',
-            output_shape=(None, self.hidden_size),
+            output_shape=(None, self.units),
             bias_axes='e',
             kernel_initializer=self.kernel_initializer,
             name='dense',
@@ -210,7 +212,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
 
         The function first projects `tensor_inputs` into query, key, value 
         tensors. There are a list of tensors of length `num_attention_heads`,
-        where each tensor's shape is [batch_size, seq_length, hidden_size]
+        where each tensor's shape is [batch_size, seq_length, units]
 
         Then, the query and key tensors are dot-producted and scaled (if any).
         These are softmaxed to obtain attention probabilities. The value tensors
@@ -243,7 +245,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         #   Lv = sequence length of value tensor, It is equal to Lk
         #   H = number of attention heads
         #   U = number of units per head
-        #   dim = dimension of inputs, It's equal to `hidden_size` (H*U)
+        #   dim = dimension of inputs, It's equal to `units` (H*U)
 
         # [query, key, value] should be [B, Lq, dim], [B, Lk, dim], [B, Lv, dim]
         query_tensor = tensor_inputs[0]
@@ -298,7 +300,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
     `attention is all you need`.
 
     Args:
-        hidden_size: Positive integer. Total number of output space.
+        units: Positive integer. Total number of output space.
         feed_forward_size: Positive integer. The number of units in 
             a feed-froward layer.
         num_head: Positive integer. number of attention heads in this layer.
@@ -312,7 +314,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
     '''
     def __init__(
         self, 
-        hidden_size,
+        units,
         feed_forward_size=3072,
         num_head=1,
         kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.2),
@@ -322,7 +324,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
         is_scale=True, 
         **kwargs):
         
-        self.hidden_size = hidden_size
+        self.units = units
         self.feed_forward_size = feed_forward_size
         self.num_head = num_head
         self.kernel_initializer = kernel_initializer
@@ -333,7 +335,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
 
         super.__init__(**kwargs)
         self.Attention = ModifiedBertAttention( 
-            hidden_size=hidden_size,
+            units,
             num_head=num_head,
             kernel_initializer=kernel_initializer,
             drop_rate=drop_rate,
@@ -354,7 +356,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
         self.Dense = tf.keras.layers.experimental.EinsumDense(
             equation='abc,cd->abd',
             bias_axes='d',
-            output_shape=(None, hidden_size),
+            output_shape=(None, units),
             kernel_initializer=kernel_initializer,
             name='dense',
         )
@@ -398,7 +400,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
         #   Lv = sequence length of value tensor, It is equal to Lk
         #   H = number of attention heads
         #   U = number of units per head
-        #   dim = dimension of inputs, It's equal to `hidden_size` (H*U)
+        #   dim = dimension of inputs, It's equal to `units` (H*U)
         #   F = number of units in a feed-forward layer
 
         # `attention_output` = [B, Lq, H*U (dim)]
@@ -426,7 +428,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
 class ModifiedBertEncoder(tf.keras.layers.Layer):
     def __init__(
         self, 
-        hidden_size,
+        units,
         feed_forward_size=3072,
         num_head=1,
         num_hidden_layers=12,
@@ -437,7 +439,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
         is_scale=True, 
         **kwargs):
         
-        self.hidden_size = hidden_size
+        self.units = units
         self.feed_forward_size = feed_forward_size
         self.num_head = num_head
         self.num_hidden_layers = num_hidden_layers
@@ -450,7 +452,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
         super.__init__(**kwargs)
         self.Layer = [
             ModifiedBertSubLayer(
-                hidden_size=hidden_size,
+                units,
                 feed_forward_size=feed_forward_size,
                 num_head=num_head,
                 num_hidden_layers=num_hidden_layers,
@@ -466,7 +468,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
     
     def call(
         self,
-        hidden_states,
+        tensor_in,
         attention_mask=None, 
         head_masks=None, 
         does_return_attention_probs=False,
@@ -478,27 +480,27 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
         attention_probs = () if does_return_attention_probs else None
         all_hidden_states = () if does_return_hidden_state else None
         if does_return_hidden_state:
-            all_hidden_states += hidden_states
+            all_hidden_states += tensor_in
 
 
         for i, _bert_layer in enumerate(self.Layer):
             # self-attention
             _outputs = _bert_layer(
-                [hidden_states],
+                [_tensor],
                 attention_mask=attention_mask, 
                 head_mask=head_masks[i], 
                 does_return_attention_probs=does_return_attention_probs,
                 training=training
             )
-            hidden_states = _outputs[0]
+            _tensor = _outputs[0]
 
             if does_return_attention_probs:
                 attention_probs += (_outputs[1],)
             if does_return_hidden_state:
-                all_hidden_states += hidden_states
+                all_hidden_states += _tensor
         
         if not does_return_dict:
-            res = (hidden_states)
+            res = (_tensor)
             if does_return_attention_probs:
                 res += attention_probs
             if does_return_hidden_state:
@@ -506,7 +508,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
             return res
         
         return ResultBertEncoder(
-            output=hidden_states,
+            output=_tensor,
             hidden_states=all_hidden_states, 
             attentions=attention_probs,
         )
@@ -514,7 +516,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
 class ModifiedBertMainLayer(tf.keras.layers.Layer):
     def __init__(
         self,
-        hidden_size,
+        units,
         vocab_size,
         type_vocab_size,
         max_position_embeddings,
@@ -530,7 +532,7 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
         has_pooling_layer=True,
         **kwargs):
         super().__init__(**kwargs)
-        self.hidden_size = hidden_size
+        self.units = units
         self.vocab_size = vocab_size
         self.type_vocab_size = type_vocab_size
         self.max_position_embeddings = max_position_embeddings
@@ -546,7 +548,7 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
         self.has_pooling_layer = has_pooling_layer
 
         self.Embedding = ModifiedBertEmbedding(
-            self.hidden_size,
+            self.units,
             self.vocab_size,
             self.type_vocab_size,
             self.max_position_embeddings,
@@ -557,7 +559,7 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
         )
 
         self.Encoder = ModifiedBertEncoder(
-            self.hidden_size,
+            self.units,
             feed_forward_size=self.feed_forward_size,
             num_head=self.num_head,
             num_hidden_layers=self.num_hidden_layers,
@@ -569,7 +571,7 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
         )
 
         self.Pooling = tf.keras.layers.Dense(
-            self.hidden_size,
+            self.units,
             kernel_initializer=self.kernel_initializer,
             activation=self.pooling_activation,
             name='pooling',

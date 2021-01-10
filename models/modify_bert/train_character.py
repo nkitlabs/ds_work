@@ -23,8 +23,8 @@ class MLMPredictionLayer(tf.keras.layers.Layer):
             name='layer_norm',
         )
 
-    def call(self, tensor):
-        tensor = self.Dense(tensor)
-        tensor = self.Activation(tensor)
-        tensor = self.LayerNorm(tensor)
-        return tensor
+    def call(self, tensor_in):
+        _tensor = self.Dense(tensor_in)
+        _tensor = self.Activation(_tensor)
+        _tensor = self.LayerNorm(_tensor)
+        return _tensor
