@@ -67,12 +67,19 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
             return self._embedding(
                 input_ids, 
                 position_ids, 
+                token_type_ids,
                 input_embeds, 
                 training=training)
         else:
             raise ValueError(f'mode {mode} is invalid')
     
-    def _embedding(self, input_ids, position_ids, input_embeds, training=False):
+    def _embedding(
+        self, 
+        input_ids, 
+        position_ids, 
+        input_embeds, 
+        token_type_ids,
+        training=False):
         '''Applies embedding based on inputs tensor.'''
         assert not (input_ids is None and input_embeds is None)
 
