@@ -1,9 +1,9 @@
 # https://github.com/huggingface/transformers/blob/master/src/transformers/models/bert/modeling_tf_bert.py
 import tensorflow as tf
 import numpy as np
-from utils import get_tensor_shape
-from activate_function import gelu_activate_fn
-from result_template import ResultBertEncoder, ResultBertMainLayer
+from .utils import get_tensor_shape
+from .activate_function import gelu_activate_fn
+from .result_template import ResultBertEncoder, ResultBertMainLayer
 
 class ModifiedBertEmbedding(tf.keras.layers.Layer):
     def __init(
@@ -324,6 +324,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
         is_scale=True, 
         **kwargs):
         
+        super().__init__(**kwargs)
         self.units = units
         self.feed_forward_size = feed_forward_size
         self.num_head = num_head
@@ -333,7 +334,6 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
         self.layer_norm_eps = layer_norm_eps
         self.is_scale = is_scale
 
-        super.__init__(**kwargs)
         self.Attention = ModifiedBertAttention( 
             units,
             num_head=num_head,
@@ -439,6 +439,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
         is_scale=True, 
         **kwargs):
         
+        super().__init__(**kwargs)
         self.units = units
         self.feed_forward_size = feed_forward_size
         self.num_head = num_head
@@ -449,13 +450,11 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
         self.layer_norm_eps = layer_norm_eps
         self.is_scale = is_scale
 
-        super.__init__(**kwargs)
         self.Layer = [
             ModifiedBertSubLayer(
                 units,
                 feed_forward_size=feed_forward_size,
                 num_head=num_head,
-                num_hidden_layers=num_hidden_layers,
                 kernel_initializer=kernel_initializer,
                 activation_fn=activation_fn,
                 drop_rate=drop_rate,
@@ -554,10 +553,10 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
             self.max_position_embeddings,
             kernel_initializer=self.kernel_initializer,
             layer_norm_eps=self.layer_norm_eps,
-            droprate=self.drop_rate,
+            drop_rate=self.drop_rate,
             name='embedding'
         )
-
+        
         self.Encoder = ModifiedBertEncoder(
             self.units,
             feed_forward_size=self.feed_forward_size,
@@ -576,7 +575,7 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
             activation=self.pooling_activation,
             name='pooling',
         )
-    
+
     def call(
         self,
         input_ids=None,

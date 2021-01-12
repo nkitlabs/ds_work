@@ -1,8 +1,8 @@
 import tensorflow as tf
-from activate_function import gelu_activate_fn
-from transformer import ModifiedBertMainLayer
-from result_template import ResultBertPretrainingMLM
-from utils import get_tensor_shape
+from .activate_function import gelu_activate_fn
+from .transformer import ModifiedBertMainLayer
+from .result_template import ResultBertPretrainingMLM
+from .utils import get_tensor_shape
 
 class MLMPredictionLayer(tf.keras.layers.Layer):
     def __init__(
