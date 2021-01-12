@@ -143,3 +143,24 @@ class ResultBertMainLayer(ResultModel):
     pooler_output: tf.Tensor = None
     hidden_states: Optional[Tuple[tf.Tensor]] = None
     attentions: Optional[Tuple[tf.Tensor]] = None
+
+@dataclass
+class ResultBertPretrainingMLM(ResultModel):
+    '''
+    Base class for causal language model (or autoregressive) outputs.
+    Args:
+        loss: (Optional) tuple of float tensors
+            Language modeling loss
+        output: tensor object with size [batch_size, seq_length, vocab_size].
+            Prediction scores (scores for each vocabulary token before Softmax)
+        hidden_states: (Optional) tuple of float tensors.
+            All hidden states calculated from sublayers.
+        attentions: (Optional) tuple of float tensors.
+            Attentions weights after the attention softmax, used to compute the 
+            weighted average in the self-attention heads.
+    '''
+
+    loss: Optional[tf.Tensor] = None
+    output: tf.Tensor = None
+    hidden_states: Optional[Tuple[tf.Tensor]] = None
+    attentions: Optional[Tuple[tf.Tensor]] = None
