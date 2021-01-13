@@ -6,7 +6,7 @@ from .activate_function import gelu_activate_fn
 from .result_template import ResultBertEncoder, ResultBertMainLayer
 
 class ModifiedBertEmbedding(tf.keras.layers.Layer):
-    def __init(
+    def __init__(
         self, 
         output_dim,
         vocab_size,
@@ -47,7 +47,7 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
 
         self.Dropout = tf.keras.layers.Dropout(self.drop_rate)
     
-    def build(self, input_shape):
+    def build(self):
         self.word_embed_mapping = self.add_weight(
             name='word_embedding',
             shape=[self.vocab_size, self.output_dim],
@@ -481,7 +481,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
         if does_return_hidden_state:
             all_hidden_states += tensor_in
 
-
+        _tensor = tensor_in
         for i, _bert_layer in enumerate(self.Layer):
             # self-attention
             _outputs = _bert_layer(
@@ -536,7 +536,7 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
         self.type_vocab_size = type_vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.feed_forward_size = feed_forward_size
-        self.num_head = num_head,
+        self.num_head = num_head
         self.num_hidden_layers = num_hidden_layers
         self.kernel_initializer = kernel_initializer
         self.activation_fn = activation_fn
