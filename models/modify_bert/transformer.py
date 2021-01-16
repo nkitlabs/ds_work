@@ -158,7 +158,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         
         self.units = units
         self.num_head = num_head
-        self.unit_per_head = units / num_head
+        self.unit_per_head = units // num_head
         self.kernel_initializer = kernel_initializer
         self.drop_rate = drop_rate
         self.layer_norm_eps = layer_norm_eps
@@ -223,8 +223,8 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         the input is passed into a residual and a normalized layer.
 
         Args:
-            tensor_inputs: list of float tensors [Query, Key, Value]
-                If `tensor_inputs`'s length is 1 or tensors in `tensor_inputs` 
+            tensor_inputs: list of float tensors [Query, Key, Value] or float tensor.
+                If `tensor_inputs`'s length is 1 or it is a float tensor,
                 are the same, then this is self-attention.
             attention_mask: (optional) float32 Tensor shape [batch_size, 
             query_seq_length, key_seq_length]
@@ -251,9 +251,23 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         #   dim = dimension of inputs, It's equal to `units` (H*U)
 
         # [query, key, value] should be [B, Lq, dim], [B, Lk, dim], [B, Lv, dim]
-        query_tensor = tensor_inputs[0]
-        key_tensor = tensor_inputs[0] if len(tensor_inputs) == 1 else tensor_inputs[1]
-        value_tensor = key_tensor if len(tensor_inputs) < 3 else tensor_inputs[2]
+        query_tensor = None
+        key_tensor = None
+        value_tensor = None
+
+        if isinstance(tensor_inputs, list):
+            query_tensor = tensor_inputs[0]
+            key_tensor = tensor_inputs[0] if len(tensor_inputs) == 1 else tensor_inputs[1]
+            value_tensor = key_tensor if len(tensor_inputs) < 3 else tensor_inputs[2]
+        elif tf.is_tensor(tensor_inputs):
+            query_tensor = tensor_inputs
+            key_tensor = tensor_inputs
+            value_tensor = tensor_inputs
+        else:
+            raise ValueError(
+                f'`tensor_inputs` should be either list of float tensors or'
+                f'a float tensor'
+            )
 
         # `query_tensor` = [B, Lq, H, U]
         # `key_tensor` = [B, Lk, H, U]
@@ -263,7 +277,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         value_tensor = self.ValueLayer(value_tensor)
 
         # attention score = QK^T/scale_factor = [B, H, Lq, Lk]
-        attention_scores = tf.einsum('aecd,acbd->acbe', key_tensor, query_tensor)
+        attention_scores = tf.einsum('aecd,abcd->acbe', key_tensor, query_tensor)
         if self.is_scale:
             scale_factor = 1/np.sqrt(self.unit_per_head)
             attention_scores = tf.math.scalar_mul(scale_factor, attention_scores)
