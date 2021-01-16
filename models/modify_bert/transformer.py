@@ -47,7 +47,7 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
 
         self.Dropout = tf.keras.layers.Dropout(self.drop_rate)
     
-    def build(self):
+    def build(self, input_shape):
         self.word_embed_mapping = self.add_weight(
             name='word_embedding',
             shape=[self.vocab_size, self.output_dim],
@@ -89,7 +89,10 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
         _input = input_ids if input_ids is not None else input_embeds
         input_shape = get_tensor_shape(_input)
         if input_embeds is None:
-            input_embeds = tf.gather(self.word_embed_mapping, input_ids)
+            input_embeds = tf.gather(
+                self.word_embed_mapping, 
+                tf.cast(input_ids, dtype=tf.int32)
+            )
 
         if position_ids is None:
             position_ids = tf.range(input_shape[1], dtype=tf.int32)[tf.newaxis, :]
