@@ -6,3 +6,7 @@ from .transformer import (
     ModifiedBertSubLayer,
     ModifiedBertMainLayer
 )
+from .result_template import (
+    ResultBertEncoder,
+    ResultModel
+)
