@@ -107,21 +107,6 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
         embeds = self.LayerNorm(embeds)
         embeds = self.Dropout(embeds, training=training)
         return embeds
-    
-    # tensor input [batch_size, length, units]
-    def _linear(self, tensor_in):
-        '''Computes logits by running inputs through a linear layer.
-
-        Args:
-            tensor: A float32 tensor with shape [batch_size, length, units]
-        Returns:
-            float32 tensor with shape [batch_size, length, vocab_size]
-
-        '''
-        input_shape = get_tensor_shape(tensor_in)
-        _tensor = tf.reshape(tensor_in, [-1, self.output_dim])
-        _tensor = tf.matmul(_tensor, self.word_embed_mapping, transpose_b=True)
-        return tf.reshape(_tensor, [input_shape[0], input_shape[1], self.vocab_size])
 
 class ModifiedBertAttention(tf.keras.layers.Layer):
     '''Performs multi-headed attention from tensor_inputs.
@@ -228,6 +213,8 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
                 are the same, then this is self-attention.
             attention_mask: (optional) float32 Tensor shape [batch_size, 
             query_seq_length, key_seq_length]
+                A mask whether a pair of items in query and key should be 
+                calculated or not.
             head_mask: (optional) float32 Tensor.
             does_return_attention_probs: boolean (Default: False).
                 Whether the result additionally returns attention_probs.
@@ -269,26 +256,12 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
                 f'a float tensor'
             )
 
-        # `query_tensor` = [B, Lq, H, U]
-        # `key_tensor` = [B, Lk, H, U]
-        # `value_tensor` = [B, Lv, H, U]
-        query_tensor = self.QueryLayer(query_tensor)
-        key_tensor = self.KeyLayer(key_tensor)
-        value_tensor = self.ValueLayer(value_tensor)
-
-        # attention score = QK^T/scale_factor = [B, H, Lq, Lk]
-        attention_scores = tf.einsum('aecd,abcd->acbe', key_tensor, query_tensor)
-        if self.is_scale:
-            scale_factor = 1/np.sqrt(self.unit_per_head)
-            attention_scores = tf.math.scalar_mul(scale_factor, attention_scores)
-
-        if attention_mask is not None:
-            # convert to size [B, 1, Lq, Lk]
-            attention_mask = tf.expand_dims(attention_mask, axis=[1])
-            attention_scores = attention_scores + attention_mask
-        
         # attention_probs = [B, H, Lq, Lk]
-        attention_probs = tf.nn.softmax(attention_scores)
+        attention_probs = self.cal_attention_probs(
+            query_tensor,
+            key_tensor,
+            attention_mask,
+        )
         attention_probs = self.Dropout1(attention_probs, training=training)
 
         # Mask heads, however, in reference they calculate on attention_scores.
@@ -296,7 +269,9 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         # if head_mask is not None:
         #     attention_probs = attention_probs * head_mask
 
+        # `value_tensor` = [B, Lv, H, U]
         # `attention_output` = [B, Lq, H, U]
+        value_tensor = self.ValueLayer(value_tensor)
         attention_output = tf.einsum('acbe,aecd->abcd', attention_probs, value_tensor)
         
         # `attention_output` = [B, Lq, H*U (dim)]
@@ -308,6 +283,38 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         if does_return_attention_probs:
             output = (attention_output, attention_probs)
         return output
+    
+    def cal_attention_probs(self, query_tensor, key_tensor, mask_tensor=None):
+        '''Calculate attention probabilities from query and key tensor.
+        Args:
+            query_tensor: A float tensor whose size [batch_size, length, dim_input]
+            key_tensor: A float tensor whose size [batch_size, length, dim_input]
+            mask_tensor: A float tensor whose size [batch_size, query_length, 
+            key_length]
+                A mask whether a pair of items in query and key should be 
+                calculated or not.
+        Returns:
+            - float Tensor of shape [batch_size, query_seq_length, 
+                num_attention_head * unit_per_head (dimension input)].
+        '''
+        # `query_tensor` => [B, Lq, H, U]
+        # `key_tensor` => [B, Lk, H, U]
+        query_tensor = self.QueryLayer(query_tensor)
+        key_tensor = self.KeyLayer(key_tensor)
+
+        # attention score = QK^T/scale_factor => [B, H, Lq, Lk]
+        attention_scores = tf.einsum('aecd,abcd->acbe', key_tensor, query_tensor)
+        if self.is_scale:
+            scale_factor = 1/np.sqrt(self.unit_per_head)
+            attention_scores = tf.math.scalar_mul(scale_factor, attention_scores)
+
+        if mask_tensor is not None:
+            # convert `mask_tensor` => [B, 1, Lq, Lk]
+            mask_tensor = tf.expand_dims(mask_tensor, axis=[1])
+            attention_scores = attention_scores + mask_tensor
+        
+        attention_probs = tf.nn.softmax(attention_scores)
+        return attention_probs
 
 class ModifiedBertSubLayer(tf.keras.layers.Layer):
     '''Performs BERT unit.
