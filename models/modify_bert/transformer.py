@@ -189,13 +189,7 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         )
         self.Dropout2 = tf.keras.layers.Dropout(rate=self.drop_rate)
     
-    def call(
-        self, 
-        tensor_inputs, 
-        attention_mask=None, 
-        head_mask=None, 
-        does_return_attention_probs=False,
-        training=False):
+    def call(self, tensor_inputs, tensor_mask=None, training=False):
         '''Performs multi-head attention from `tensor_inputs`.
 
         The function first projects `tensor_inputs` into query, key, value 
@@ -211,13 +205,10 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
             tensor_inputs: list of float tensors [Query, Key, Value] or float tensor.
                 If `tensor_inputs`'s length is 1 or it is a float tensor,
                 are the same, then this is self-attention.
-            attention_mask: (optional) float32 Tensor shape [batch_size, 
+            tensor_mask: (optional) float32 Tensor shape [batch_size, 
             query_seq_length, key_seq_length]
                 A mask whether a pair of items in query and key should be 
-                calculated or not.
-            head_mask: (optional) float32 Tensor.
-            does_return_attention_probs: boolean (Default: False).
-                Whether the result additionally returns attention_probs.
+                calculated or not (one means that pair should be calculated).
             training: boolean (Default: False).
         Returns:
             - float Tensor of shape [batch_size, query_seq_length, 
@@ -238,18 +229,18 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
         #   dim = dimension of inputs, It's equal to `units` (H*U)
 
         # [query, key, value] should be [B, Lq, dim], [B, Lk, dim], [B, Lv, dim]
-        query_tensor = None
-        key_tensor = None
-        value_tensor = None
+        tensor_query = None
+        tensor_key = None
+        tensor_value = None
 
         if isinstance(tensor_inputs, list):
-            query_tensor = tensor_inputs[0]
-            key_tensor = tensor_inputs[0] if len(tensor_inputs) == 1 else tensor_inputs[1]
-            value_tensor = key_tensor if len(tensor_inputs) < 3 else tensor_inputs[2]
+            tensor_query = tensor_inputs[0]
+            tensor_key = tensor_inputs[0] if len(tensor_inputs) == 1 else tensor_inputs[1]
+            tensor_value = tensor_key if len(tensor_inputs) < 3 else tensor_inputs[2]
         elif tf.is_tensor(tensor_inputs):
-            query_tensor = tensor_inputs
-            key_tensor = tensor_inputs
-            value_tensor = tensor_inputs
+            tensor_query = tensor_inputs
+            tensor_key = tensor_inputs
+            tensor_value = tensor_inputs
         else:
             raise ValueError(
                 f'`tensor_inputs` should be either list of float tensors or'
@@ -258,38 +249,29 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
 
         # attention_probs = [B, H, Lq, Lk]
         attention_probs = self.cal_attention_probs(
-            query_tensor,
-            key_tensor,
-            attention_mask,
+            tensor_query,
+            tensor_key,
+            tensor_mask,
         )
         attention_probs = self.Dropout1(attention_probs, training=training)
 
-        # Mask heads, however, in reference they calculate on attention_scores.
-        # Should it be attention_probs? For now, we comment this.
-        # if head_mask is not None:
-        #     attention_probs = attention_probs * head_mask
-
-        # `value_tensor` = [B, Lv, H, U]
-        # `attention_output` = [B, Lq, H, U]
-        value_tensor = self.ValueLayer(value_tensor)
-        attention_output = tf.einsum('acbe,aecd->abcd', attention_probs, value_tensor)
+        # `tensor_value` = [B, Lv, H, U]
+        # `tensor_out` = [B, Lq, H, U]
+        value_tensor = self.ValueLayer(tensor_value)
+        tensor_out = tf.einsum('acbe,aecd->abcd', attention_probs, value_tensor)
         
         # `attention_output` = [B, Lq, H*U (dim)]
-        attention_output = self.Dense(attention_output)
-        attention_output = self.Dropout2(attention_output, training=training)
-        attention_output = self.LayerNorm(attention_output + tensor_inputs[0])
-        
-        output = (attention_output,)
-        if does_return_attention_probs:
-            output = (attention_output, attention_probs)
-        return output
+        tensor_out = self.Dense(tensor_out)
+        tensor_out = self.Dropout2(tensor_out, training=training)
+        tensor_out = self.LayerNorm(tensor_out + tensor_inputs[0])
+        return tensor_out
     
-    def cal_attention_probs(self, query_tensor, key_tensor, mask_tensor=None):
+    def cal_attention_probs(self, tensor_query, tensor_key, tensor_mask=None):
         '''Calculate attention probabilities from query and key tensor.
         Args:
-            query_tensor: A float tensor whose size [batch_size, length, dim_input]
-            key_tensor: A float tensor whose size [batch_size, length, dim_input]
-            mask_tensor: A float tensor whose size [batch_size, query_length, 
+            tensor_query: A float tensor whose size [batch_size, length, dim_input]
+            tensor_key: A float tensor whose size [batch_size, length, dim_input]
+            tensor_mask: A float tensor whose size [batch_size, query_length, 
             key_length]
                 A mask whether a pair of items in query and key should be 
                 calculated or not.
@@ -297,21 +279,21 @@ class ModifiedBertAttention(tf.keras.layers.Layer):
             - float Tensor of shape [batch_size, query_seq_length, 
                 num_attention_head * unit_per_head (dimension input)].
         '''
-        # `query_tensor` => [B, Lq, H, U]
-        # `key_tensor` => [B, Lk, H, U]
-        query_tensor = self.QueryLayer(query_tensor)
-        key_tensor = self.KeyLayer(key_tensor)
+        # `tensor_query` => [B, Lq, H, U]
+        # `tensor_key` => [B, Lk, H, U]
+        tensor_query = self.QueryLayer(tensor_query)
+        tensor_key = self.KeyLayer(tensor_key)
 
         # attention score = QK^T/scale_factor => [B, H, Lq, Lk]
-        attention_scores = tf.einsum('aecd,abcd->acbe', key_tensor, query_tensor)
+        attention_scores = tf.einsum('aecd,abcd->acbe', tensor_key, tensor_query)
         if self.is_scale:
             scale_factor = 1/np.sqrt(self.unit_per_head)
             attention_scores = tf.math.scalar_mul(scale_factor, attention_scores)
 
-        if mask_tensor is not None:
+        if tensor_mask is not None:
             # convert `mask_tensor` => [B, 1, Lq, Lk]
-            mask_tensor = tf.expand_dims(mask_tensor, axis=[1])
-            attention_scores = attention_scores + mask_tensor
+            tensor_mask = tf.expand_dims(tensor_mask, axis=[1])
+            attention_scores = attention_scores + tensor_mask
         
         attention_probs = tf.nn.softmax(attention_scores)
         return attention_probs
@@ -393,20 +375,15 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
     def call(
         self,
         tensor_inputs, 
-        attention_mask=None, 
-        head_mask=None, 
-        does_return_attention_probs=False,
+        tensor_mask=None, 
         training=False):
         '''
         Args:
             tensor_inputs: list of float tensors [Query, Key, Value]
                 If `tensor_inputs`'s length is 1 or tensors in `tensor_inputs` 
                 are the same, then this is self-attention.
-            attention_mask: (optional) float32 Tensor shape [batch_size, 
+            tensor_mask: (optional) float32 Tensor shape [batch_size, 
             query_seq_length, key_seq_length]
-            head_mask: (optional) float32 Tensor.
-            does_return_attention_probs: boolean (Default: False).
-                Whether the result additionally returns attention_probs.
             training: boolean (Default: False).
         Returns:
             - float Tensor of shape [batch_size, query_seq_length, 
@@ -428,14 +405,7 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
         #   F = number of units in a feed-forward layer
 
         # `attention_output` = [B, Lq, H*U (dim)]
-        attention_outputs = self.Attention(
-            tensor_inputs, 
-            attention_mask=attention_mask, 
-            head_mask=head_mask, 
-            does_return_attention_probs=does_return_attention_probs,
-            training=training
-        )
-        attention_output = attention_outputs[0]
+        attention_output = self.Attention(tensor_inputs, tensor_mask, training)
         
         # `feed_forward_output` = [B, Lq, F]
         feed_forward_output = self.FeedForward(attention_output)
@@ -445,9 +415,8 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
         tensor_out = self.Dense(feed_forward_output)
         tensor_out = self.Dropout(tensor_out, training=training)
         tensor_out = self.LayerNorm(tensor_out + attention_output)
-        outputs = (tensor_out,) + attention_outputs[1:]
         
-        return outputs
+        return tensor_out
 
 class ModifiedBertEncoder(tf.keras.layers.Layer):
     def __init__(
@@ -493,55 +462,45 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
         x = super().compute_output_shape(input_shape)
         return x[0]
     
-    def call(
-        self,
-        tensor_in,
-        attention_mask=None, 
-        head_masks=None, 
-        does_return_attention_probs=False,
-        does_return_hidden_state=False,
-        training=False,
-        does_return_dict=False):
+    def call(self, tensor_in, mask_tensor=None, training=False):
         
         # all_hidden_states = () if does_return_hidden_state
-        attention_probs = () if does_return_attention_probs else None
-        all_hidden_states = () if does_return_hidden_state else None
-        if does_return_hidden_state:
-            all_hidden_states += tensor_in
-        
-        if head_masks is None:
-            head_masks = [None] * self.num_hidden_layers
+        # attention_probs = () if does_return_attention_probs else None
+        # all_hidden_states = () if does_return_hidden_state else None
+        # if does_return_hidden_state:
+        #     all_hidden_states += tensor_in
 
         _tensor = tensor_in
         for i, _bert_layer in enumerate(self.Layer):
             # self-attention
-            _outputs = _bert_layer(
+            _output = _bert_layer(
                 [_tensor],
-                attention_mask=attention_mask, 
-                head_mask=head_masks[i], 
-                does_return_attention_probs=does_return_attention_probs,
+                mask_tensor=mask_tensor,
                 training=training
             )
-            _tensor = _outputs[0]
+            _tensor = _output
+            # _tensor = _outputs[0]
 
-            if does_return_attention_probs:
-                attention_probs += (_outputs[1],)
-            if does_return_hidden_state:
-                all_hidden_states += _tensor
+            # if does_return_attention_probs:
+            #     attention_probs += (_outputs[1],)
+            # if does_return_hidden_state:
+            #     all_hidden_states += _tensor
         
-        if not does_return_dict:
-            res = (_tensor)
-            if does_return_attention_probs:
-                res += attention_probs
-            if does_return_hidden_state:
-                res += all_hidden_states
-            return res
+        # if not does_return_dict:
+        #     res = (_tensor)
+        #     if does_return_attention_probs:
+        #         res += attention_probs
+        #     if does_return_hidden_state:
+        #         res += all_hidden_states
+        #     return res
 
-        return ResultBertEncoder(
-            output=_tensor,
-            hidden_states=all_hidden_states, 
-            attentions=attention_probs,
-        )
+        # return ResultBertEncoder(
+        #     output=_tensor,
+        #     hidden_states=all_hidden_states, 
+        #     attentions=attention_probs,
+        # )
+        tensor_out = _tensor
+        return tensor_out
 
 class ModifiedBertMainLayer(tf.keras.layers.Layer):
     def __init__(
@@ -613,59 +572,53 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
         token_type_ids=None,
         position_ids=None,
         input_embeds=None,
-        attention_mask=None,
-        head_mask=None,
-        does_return_attention_probs=False,
-        does_return_hidden_state=False,
-        training=False,
-        does_return_dict=True
-    ):
+        tensor_mask=None,
+        training=False):
         _input = input_ids if input_ids is not None else input_embeds
         input_shape = get_tensor_shape(_input)
-        if attention_mask is None:
-            attention_mask = tf.fill(input_shape, 1)
+        if tensor_mask is None:
+            tensor_mask = tf.fill(input_shape, 1)
         if token_type_ids is None:
             token_type_ids = tf.fill(input_shape, 0)
         
         embedding_output = self.Embedding(
             input_ids=input_ids,
-            position_ids=None, 
-            token_type_ids=None,
-            input_embeds=None,
+            position_ids=position_ids, 
+            token_type_ids=token_type_ids,
+            input_embeds=input_embeds,
             mode='embedding',
-            training=False
+            training=training
         )
 
         # we convert 2D 0,1 attention mask to 3D 0,-100000 attention mask with 
         # size [batch_size, 1, 1, key_length] so that we can broad cast to 
         # [batch_size, num_head, query_length, key_length]
-        extended_attention_mask = attention_mask[:, tf.newaxis, tf.newaxis, :]
+        extended_attention_mask = tensor_mask[:, tf.newaxis, tf.newaxis, :]
         extended_attention_mask = tf.cast(extended_attention_mask, embedding_output.dtype)
         extended_attention_mask = -10000.0 * (1.0-extended_attention_mask)
 
-        encoder_outputs = self.Encoder(
+        encoder_output = self.Encoder(
             embedding_output,
-            attention_mask=extended_attention_mask, 
-            head_masks=head_mask, 
-            does_return_attention_probs=does_return_attention_probs,
-            does_return_hidden_state=does_return_hidden_state,
+            tensor_mask=extended_attention_mask, 
             training=training,
-            does_return_dict=does_return_dict
         )
+        tensor_out = encoder_output
 
         pooling_output = None
         if self.has_pooling_layer:
-            pooling_output = self.Pooling(encoder_outputs[0])
+            pooling_output = self.Pooling(encoder_output)
+            tensor_out = pooling_output
         
-        if not does_return_dict:
-            return (
-                encoder_outputs[0],
-                pooling_output,
-            ) + encoder_outputs[1:]
+        return tensor_out
+        # if not does_return_dict:
+        #     return (
+        #         encoder_outputs[0],
+        #         pooling_output,
+        #     ) + encoder_outputs[1:]
         
-        return ResultBertMainLayer(
-            output=encoder_outputs[0],
-            pooler_output=pooling_output,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-        )
+        # return ResultBertMainLayer(
+        #     output=encoder_outputs[0],
+        #     pooler_output=pooling_output,
+        #     hidden_states=encoder_outputs.hidden_states,
+        #     attentions=encoder_outputs.attentions,
+        # )

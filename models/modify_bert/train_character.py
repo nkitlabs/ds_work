@@ -98,26 +98,19 @@ class PretrainingMLM(tf.keras.layers.Layer):
         token_type_ids=None,
         input_embeds=None,
         labels=None,
-        attention_mask=None,
-        head_mask=None,
-        does_return_attention_probs=False,
-        does_return_hidden_state=False,
+        tensor_mask=None,
         training=False,
         does_return_dict=True):
 
-        bert_outputs = self.Bert(
+        bert_output = self.Bert(
             input_ids=input_ids,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
             input_embeds=input_embeds,
-            attention_mask=attention_mask,
-            head_mask=head_mask,
-            does_return_attention_probs=does_return_attention_probs,
-            does_return_hidden_state=does_return_hidden_state,
-            training=training,
-            does_return_dict=does_return_dict
+            tensor_mask=tensor_mask,
+            training=training
         )
-        preds = self.MLM(bert_outputs[0])
+        preds = self.MLM(bert_output)
         loss = None
         if labels is not None:
             logits = preds[:, :-1]
@@ -125,7 +118,8 @@ class PretrainingMLM(tf.keras.layers.Layer):
 
         
         if not does_return_dict:
-            res = (preds, ) + bert_outputs[2:]
+            res = (preds,)
+            # res = (preds, ) + bert_outputs[2:]
             if loss is not None:
                 res = (loss,) + res
             return res
@@ -133,7 +127,7 @@ class PretrainingMLM(tf.keras.layers.Layer):
         return ResultBertPretrainingMLM(
             loss=loss,
             output=preds,
-            hidden_states=bert_outputs.hidden_states,
-            attentions=bert_outputs.attentions,
+            # hidden_states=bert_outputs.hidden_states,
+            # attentions=bert_outputs.attentions,
         )
     
