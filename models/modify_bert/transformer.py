@@ -482,6 +482,10 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
             for i in range(num_hidden_layers)
         ]
     
+    def compute_output_shape(self, input_shape):
+        x = super().compute_output_shape(input_shape)
+        return x[0]
+    
     def call(
         self,
         tensor_in,
@@ -490,13 +494,16 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
         does_return_attention_probs=False,
         does_return_hidden_state=False,
         training=False,
-        does_return_dict=True):
+        does_return_dict=False):
         
         # all_hidden_states = () if does_return_hidden_state
         attention_probs = () if does_return_attention_probs else None
         all_hidden_states = () if does_return_hidden_state else None
         if does_return_hidden_state:
             all_hidden_states += tensor_in
+        
+        if head_masks is None:
+            head_masks = [None] * self.num_hidden_layers
 
         _tensor = tensor_in
         for i, _bert_layer in enumerate(self.Layer):
@@ -522,7 +529,7 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
             if does_return_hidden_state:
                 res += all_hidden_states
             return res
-        
+
         return ResultBertEncoder(
             output=_tensor,
             hidden_states=all_hidden_states, 
