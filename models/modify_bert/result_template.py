@@ -46,12 +46,11 @@ class ResultModel(OrderedDict):
         _iterable, _iterator = False, None
         try:
             _iterator = iter(_first_field)
-            _terable  = True
+            _iterable  = True
         except TypeError:
             _iterable = False
         
         if not _iterable:
-            assert _first_field is not None, f'only field in this object is None'
             self[_class_fields[0].name] = _first_field
             return
         
@@ -85,7 +84,7 @@ class ResultModel(OrderedDict):
     def __setattr__(self, name, value):
         if name in self.keys() and value is not None:
             super().__setitem__(name, value)
-        super().__setitem__(name, value)
+        super().__setattr__(name, value)
 
     def __delitem__(self, *args, **kwargs):
         raise Exception(
