@@ -633,19 +633,58 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
 
         pooling_output = None
         if self.has_pooling_layer:
-            pooling_output = self.Pooling(encoder_output)
+            pooling_output = self.Pooling(tensor_out)
             tensor_out = pooling_output
         
         return tensor_out
-        # if not does_return_dict:
-        #     return (
-        #         encoder_outputs[0],
-        #         pooling_output,
-        #     ) + encoder_outputs[1:]
+
+    def get_calculated_value(
+        self,
+        input_ids=None,
+        token_type_ids=None,
+        position_ids=None,
+        input_embeds=None,
+        tensor_mask=None,
+        training=False):
+        _input = input_ids if input_ids is not None else input_embeds
+        input_shape = get_tensor_shape(_input)
+        if tensor_mask is None:
+            tensor_mask = tf.fill(input_shape, 1)
+        if token_type_ids is None:
+            token_type_ids = tf.fill(input_shape, 0)
         
-        # return ResultBertMainLayer(
-        #     output=encoder_outputs[0],
-        #     pooler_output=pooling_output,
-        #     hidden_states=encoder_outputs.hidden_states,
-        #     attentions=encoder_outputs.attentions,
-        # )
+        embedding_output = self.Embedding(
+            input_ids=input_ids,
+            position_ids=position_ids, 
+            token_type_ids=token_type_ids,
+            input_embeds=input_embeds,
+            mode='embedding',
+            training=training
+        )
+
+        # we convert 2D 0,1 attention mask to 3D 0,-100000 attention mask with 
+        # size [batch_size, 1, 1, key_length] so that we can broad cast to 
+        # [batch_size, num_head, query_length, key_length]
+        extended_attention_mask = tensor_mask[:, tf.newaxis, tf.newaxis, :]
+        extended_attention_mask = tf.cast(extended_attention_mask, embedding_output.dtype)
+        extended_attention_mask = -10000.0 * (1.0-extended_attention_mask)
+
+        encoder_results = self.Encoder.get_calculated_value(
+            embedding_output,
+            tensor_mask=extended_attention_mask, 
+            training=training,
+        )
+        tensor_out = encoder_results.output
+
+        pooling_output = None
+        if self.has_pooling_layer:
+            pooling_output = self.Pooling(tensor_out)
+            tensor_out = pooling_output
+        
+        return ResultBertMainLayer(
+            output=encoder_results.output,
+            pooler_output=pooling_output,
+            hidden_states=encoder_results.hidden_states,
+            attentions=encoder_results.attentions,
+        )
+        
