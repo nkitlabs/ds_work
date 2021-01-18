@@ -417,6 +417,9 @@ class ModifiedBertSubLayer(tf.keras.layers.Layer):
         tensor_out = self.LayerNorm(tensor_out + attention_output)
         
         return tensor_out
+    
+    def cal_attention_probs(self, tensor_query, tensor_key, tensor_mask=None):
+        return self.Attention.cal_attention_probs(tensor_query, tensor_key, tensor_mask)
 
 class ModifiedBertEncoder(tf.keras.layers.Layer):
     def __init__(
@@ -458,20 +461,22 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
             for i in range(num_hidden_layers)
         ]
     
-    def compute_output_shape(self, input_shape):
-        x = super().compute_output_shape(input_shape)
-        return x[0]
-    
-    def call(self, tensor_in, mask_tensor=None, training=False):
+    def cal_hidden_states(self, tensor_in, mask_tensor=None, training=False):
+        '''calculate hidden states from sequential BertSubLayers.
         
-        # all_hidden_states = () if does_return_hidden_state
-        # attention_probs = () if does_return_attention_probs else None
-        # all_hidden_states = () if does_return_hidden_state else None
-        # if does_return_hidden_state:
-        #     all_hidden_states += tensor_in
-
+        Args:
+            tensor_inputs: list of float tensors [Query, Key, Value]
+                If `tensor_inputs`'s length is 1 or tensors in `tensor_inputs` 
+                are the same, then this is self-attention.
+            tensor_mask: (optional) float32 Tensor shape [batch_size, 
+            query_seq_length, key_seq_length]
+            training: boolean (Default: False).
+        Returns:
+            all_hidden_states: list of float tensors
+        '''
+        all_hidden_states = (tensor_in, )
         _tensor = tensor_in
-        for i, _bert_layer in enumerate(self.Layer):
+        for _bert_layer in self.Layer:
             # self-attention
             _output = _bert_layer(
                 [_tensor],
@@ -479,27 +484,49 @@ class ModifiedBertEncoder(tf.keras.layers.Layer):
                 training=training
             )
             _tensor = _output
-            # _tensor = _outputs[0]
-
-            # if does_return_attention_probs:
-            #     attention_probs += (_outputs[1],)
-            # if does_return_hidden_state:
-            #     all_hidden_states += _tensor
+            all_hidden_states += _tensor
+        return all_hidden_states
+    
+    def get_calculated_value(self, tensor_in, mask_tensor=None, training=False):
+        '''Return all hidden states and attention probs calculated in the layer.
         
-        # if not does_return_dict:
-        #     res = (_tensor)
-        #     if does_return_attention_probs:
-        #         res += attention_probs
-        #     if does_return_hidden_state:
-        #         res += all_hidden_states
-        #     return res
+        Args:
+            tensor_inputs: list of float tensors [Query, Key, Value]
+                If `tensor_inputs`'s length is 1 or tensors in `tensor_inputs` 
+                are the same, then this is self-attention.
+            tensor_mask: (optional) float32 Tensor shape [batch_size, 
+            query_seq_length, key_seq_length]
+            training: boolean (Default: False).
+        Returns:
+            ResultBertEncoder object 
+                consisting of last hidden state (output), all other hidden states,
+                and attention probabilities.
+        '''
+        all_hidden_states = self.cal_hidden_states(
+            tensor_in, 
+            mask_tensor=mask_tensor, 
+            training=training,
+        )
+        attention_probs = ()
+        for i, _hidden_state in enumerate(all_hidden_states[:-1]):
+            attention_probs += self.Layer[i].cal_attention_probs(
+                 _hidden_state
+                , _hidden_state
+                , mask_tensor
+            )
+        return ResultBertEncoder(
+            output=all_hidden_states[-1],
+            hidden_states=all_hidden_states[:-1], 
+            attentions=attention_probs,
+        )
 
-        # return ResultBertEncoder(
-        #     output=_tensor,
-        #     hidden_states=all_hidden_states, 
-        #     attentions=attention_probs,
-        # )
-        tensor_out = _tensor
+    def call(self, tensor_in, mask_tensor=None, training=False):
+        all_hidden_states = self.cal_hidden_states(
+            tensor_in, 
+            mask_tensor=mask_tensor, 
+            training=training,
+        )
+        tensor_out = all_hidden_states[-1]
         return tensor_out
 
 class ModifiedBertMainLayer(tf.keras.layers.Layer):
