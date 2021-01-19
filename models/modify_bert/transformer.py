@@ -57,45 +57,19 @@ class ModifiedBertEmbedding(tf.keras.layers.Layer):
 
     def call(
         self, 
-        input_ids=None,
-        position_ids=None, 
+        input_ids,
         token_type_ids=None,
-        input_embeds=None,
-        mode='embedding',
-        training=False):
-        if mode == 'embedding':
-            return self._embedding(
-                input_ids, 
-                position_ids, 
-                token_type_ids,
-                input_embeds, 
-                training=training)
-        elif mode == 'linear':
-            return self._linear(input_ids)
-        else:
-            raise ValueError(f'mode {mode} is invalid')
-    
-    def _embedding(
-        self, 
-        input_ids, 
-        position_ids, 
-        input_embeds, 
-        token_type_ids,
         training=False):
         '''Applies embedding based on inputs tensor.'''
-        assert not (input_ids is None and input_embeds is None)
 
         # create different types of embeds.
-        _input = input_ids if input_ids is not None else input_embeds
-        input_shape = get_tensor_shape(_input)
-        if input_embeds is None:
-            input_embeds = tf.gather(
-                self.word_embed_mapping, 
-                tf.cast(input_ids, dtype=tf.int32)
-            )
+        input_shape = get_tensor_shape(input_ids)
+        input_embeds = tf.gather(
+            self.word_embed_mapping, 
+            tf.cast(input_ids, dtype=tf.int32)
+        )
 
-        if position_ids is None:
-            position_ids = tf.range(input_shape[1], dtype=tf.int32)[tf.newaxis, :]
+        position_ids = tf.range(input_shape[1], dtype=tf.int32)[tf.newaxis, :]
         position_embeds = tf.cast(self.PositionEmbedding(position_ids), input_embeds.dtype)
 
         if token_type_ids is None:
@@ -595,25 +569,17 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
 
     def call(
         self,
-        input_ids=None,
+        input_ids,
         token_type_ids=None,
-        position_ids=None,
-        input_embeds=None,
         tensor_mask=None,
         training=False):
-        _input = input_ids if input_ids is not None else input_embeds
-        input_shape = get_tensor_shape(_input)
+        input_shape = get_tensor_shape(input_ids)
         if tensor_mask is None:
             tensor_mask = tf.fill(input_shape, 1)
-        if token_type_ids is None:
-            token_type_ids = tf.fill(input_shape, 0)
         
         embedding_output = self.Embedding(
             input_ids=input_ids,
-            position_ids=position_ids, 
             token_type_ids=token_type_ids,
-            input_embeds=input_embeds,
-            mode='embedding',
             training=training
         )
 
@@ -642,23 +608,15 @@ class ModifiedBertMainLayer(tf.keras.layers.Layer):
         self,
         input_ids=None,
         token_type_ids=None,
-        position_ids=None,
-        input_embeds=None,
         tensor_mask=None,
         training=False):
-        _input = input_ids if input_ids is not None else input_embeds
-        input_shape = get_tensor_shape(_input)
+        input_shape = get_tensor_shape(input_ids)
         if tensor_mask is None:
             tensor_mask = tf.fill(input_shape, 1)
-        if token_type_ids is None:
-            token_type_ids = tf.fill(input_shape, 0)
         
         embedding_output = self.Embedding(
-            input_ids=input_ids,
-            position_ids=position_ids, 
+            input_ids=input_ids, 
             token_type_ids=token_type_ids,
-            input_embeds=input_embeds,
-            mode='embedding',
             training=training
         )
 

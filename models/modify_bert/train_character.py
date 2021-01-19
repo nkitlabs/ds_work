@@ -93,41 +93,17 @@ class PretrainingMLM(tf.keras.layers.Layer):
 
     def call(
         self,
-        input_ids=None,
-        position_ids=None, 
+        input_ids,
         token_type_ids=None,
-        input_embeds=None,
-        labels=None,
         tensor_mask=None,
-        training=False,
-        does_return_dict=True):
+        training=False):
 
         bert_output = self.Bert(
             input_ids=input_ids,
             token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            input_embeds=input_embeds,
             tensor_mask=tensor_mask,
             training=training
         )
         preds = self.MLM(bert_output)
-        loss = None
-        if labels is not None:
-            logits = preds[:, :-1]
-            loss = self.compute_loss(labels, logits)
-
-        
-        if not does_return_dict:
-            res = (preds,)
-            # res = (preds, ) + bert_outputs[2:]
-            if loss is not None:
-                res = (loss,) + res
-            return res
-        
-        return ResultBertPretrainingMLM(
-            loss=loss,
-            output=preds,
-            # hidden_states=bert_outputs.hidden_states,
-            # attentions=bert_outputs.attentions,
-        )
+        return preds        
     
