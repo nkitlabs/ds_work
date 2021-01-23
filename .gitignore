@@ -1,2 +1,4 @@
 hidden_output/
 *.pyc
+config.yaml
+.ipynb_checkpoints/
